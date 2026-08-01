@@ -1,4 +1,3 @@
-
 ```bash
 [root@thuner-srv1 ~]# systemctl status named
 ● named.service - Berkeley Internet Name Domain (DNS)
@@ -11,6 +10,36 @@
     Tasks: 35
    CGroup: /system.slice/named.service
            └─1874 /usr/sbin/named -u named -c /etc/named.conf
+```
+
+```bash
+[root@thuner-srv1 ~]# cat /var/named/cpp.ualberta.ca.zone
+$TTL 86400
+@   IN  SOA  thuner-srv1.cpp.ualberta.ca. root.thuner-srv1.cpp.ualberta.ca. (
+        2025112701 ; Serial (bump this)
+        3600       ; Refresh
+        1800       ; Retry
+        604800     ; Expire
+        86400 )    ; Minimum TTL
+
+@   IN  NS   thuner-srv1.cpp.ualberta.ca.
+
+thuner-srv1  IN  A  142.244.83.XX
+thuner-srv2  IN  A  142.244.83.XX
+thuner-gw5   IN  A  142.244.83.XX
+thuner-gw07  IN  A  142.244.83.XX
+thuner-gw08  IN  A  142.244.93.XX
+thuner-gw13  IN  A  129.128.122.XX
+...
+thuner-gw15  IN  A  129.128.122.XX
+thuner-gw51  IN  A  129.128.122.XX
+
+srv001       IN  A  192.168.1.XX
+srv002       IN  A  192.168.1.XX
+thuner003    IN  A  192.168.1.XX
+thuner004    IN  A  192.168.1.XX
+...
+thuner051    IN  A  192.168.1.XX
 ```
 
 ```bash
