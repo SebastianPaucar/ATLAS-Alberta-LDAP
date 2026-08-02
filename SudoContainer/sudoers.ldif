@@ -1,0 +1,5 @@
+dn: ou=sudo,dc=cpp,dc=ualberta,dc=ca
+objectClass: organizationalUnit
+objectClass: top
+ou: sudo
+description: Default ou for SUDO

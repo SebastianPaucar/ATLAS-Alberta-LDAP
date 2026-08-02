@@ -1,0 +1,8 @@
+dn: cn=defaults,ou=sudo,dc=cpp,dc=ualberta,dc=ca
+objectClass: sudoRole
+objectClass: top
+cn: defaults
+sudoOption: env_reset
+sudoOption: mail_badpass
+sudoOption: secure_path=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+#sudoOrder: 1
