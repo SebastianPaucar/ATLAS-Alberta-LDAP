@@ -1,3 +1,63 @@
+# Mitigating a Open Recursive DNS vulnerability
+
+`thuner-srv1` runs BIND (`named`) as the DNS service for the cluster infrastructure. The zone file `/var/named/cpp.ualberta.ca.zone` contains the authoritative DNS records that map cluster hostnames to their IP addresses. Clients querying names within `cpp.ualberta.ca` receive answers directly from this database. The complete picture is:
+
+```bash
+                    Compute Nodes
+                (thuner001, thuner002, ...)
+                           |
+                    DNS query ("Where is thuner003?")
+                           |
+                           ▼
+                 +----------------------+
+                 | named (BIND daemon)  |
+                 +----------------------+
+                           |
+             loads authoritative records from
+                           |
+                           ▼
+          /var/named/cpp.ualberta.ca.zone
+                           |
+                           ▼
+     thuner003 -> 192.168.1.XX
+     thuner-srv1 -> 142.244.83.XX
+     thuner-srv2 -> 142.244.83.XX
+                           |
+                           ▼
+        BIND returns the requested IP address
+                           |
+                           ▼
+      Linux routes packets using the network interfaces
+      (em1 or em2), routers, and switches.
+```
+
+The networking infrastructure (interfaces, switches, routers, routing tables) is responsible for delivering packets. The BIND infrastructure is responsible only for translating hostnames into IP addresses. The zone file is the authoritative database that allows BIND to perform that translation for the `cpp.ualberta.ca` domain. BIND loads `/var/named/cpp.ualberta.ca.zone` at startup and uses it to answer DNS queries for the `cpp.ualberta.ca` zone. The zone file is therefore input to BIND. It is not an executable program. It is simply a text file containing resource records that BIND loads into memory.
+
+## `cpp.ualberta.ca.zone` describes the network
+
+When `named` starts with `systemctl start named`, systemd executes `/usr/sbin/named -u named -c /etc/named.conf` and the daemon reads `/etc/named.conf`, and declares the server as the authoritative server for the zone `cpp.ualberta.ca`, able to load the DNS records from `/var/named/cpp.ualberta.ca.zone`. After reading the file, BIND stores the records in memory. Clients never access the zone file directly; every query is answered from BIND's in-memory database. The startup sequence is therefore:
+
+```bash
+systemd
+     │
+     ▼
+named
+     │
+     ▼
+reads /etc/named.conf
+     │
+     ▼
+opens cpp.ualberta.ca.zone
+     │
+     ▼
+loads records into memory
+     │
+     ▼
+starts answering DNS queries
+```
+
+That zone file contains:
+
 ```bash
 [root@thuner-srv1 ~]# cat /var/named/cpp.ualberta.ca.zone
 $TTL 86400
@@ -27,6 +87,46 @@ thuner004    IN  A  192.168.1.XX
 ...
 thuner051    IN  A  192.168.1.XX
 ```
+
+The zone file is a mapping between hostnames and IP addresses. This means the hostanem `thunerXYZ.cpp.ualberta.ca` has the IPv4 address `192.168.1.XX`. Similarly, `thuner-XYZ.cpp.ualberta.ca` has IPv4 address `142.244.83.XX`. The zone file is simply the authoritative hostname database. The zone file is what allows software to use hostnames instead of IP addresses. Earlier, the topology looked like:
+
+```bash
+                    University Network
+                     142.244.83.0/24
+                            |
+                     +----------------+
+                     | thuner-srv1    |
+                     | em1            |
+                     |142.244.83.Xem1 |
+                     |                |
+                     | em2            |
+                     |192.168.1.Xem2  |
+                     +----------------+
+                            |
+                    Internal Cluster LAN
+                      192.168.1.0/24
+                            |
+          ------------------------------------
+          |        |        |         |
+      thuner001 thuner002 thuner003 ...
+```
+
+So instead of connecting to `129.128.122.XX`, a user can connect to its correspondig `thuner-gwXX.cpp.ualberta.ca`. BIND performs the translation.
+
+> The network itself never uses the zone file. Routers forward packets using IP addresses. Switches forward Ethernet frames using MAC addresses. Only DNS applications read the zone file.
+
+The topology exists independently of DNS, DNS simply documents it. For example:
+
+```bash
+thuner001 IN A 192.168.1.XX
+thuner002 IN A 192.168.1.XX
+...
+thuner051 IN A 192.168.1.XX
+```
+
+Immediately tells there is an internal subnet `192.168.1.0/24` and numerous cluster nodes belong to it. Therefore, the DNS database reflects the network architecture. It does not create the network architecture.
+
+
 
 ```bash
 [root@thuner-srv1 ~]# ps aux | egrep 'named|bind|dnsmasq|unbound'
