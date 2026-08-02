@@ -126,7 +126,9 @@ thuner051 IN A 192.168.1.XX
 
 Immediately tells there is an internal subnet `192.168.1.0/24` and numerous cluster nodes belong to it. Therefore, the DNS database reflects the network architecture. It does not create the network architecture.
 
+## DNS software and network exposure 
 
+Let's identify the DNS-related services executing on `thuner-srv1`:
 
 ```bash
 [root@thuner-srv1 ~]# ps aux | egrep 'named|bind|dnsmasq|unbound'
@@ -138,20 +140,41 @@ root      2267  0.0  0.0  60344   416 ?        S    Nov27   0:00 /usr/sbin/dnsma
 root     32448  0.0  0.0 112948   996 pts/0    S+   14:46   0:00 grep -E --color=auto named|bind|dnsmasq|unbound
 ```
 
+The output shows that the primary DNS server is BIND (`named`), running with the configuration file `/etc/named.conf`. This process is responsible for providing DNS services for the cluster, including serving the authoritative `cpp.ualberta.ca` zone. The output also shows a separate `dnsmasq` instance associated with `libvirt` (`/var/lib/libvirt/dnsmasq/default.conf`), which is used exclusively for the virtual bridge (`virbr0`) and is unrelated to the cluster DNS infrastructure.
+
+> **Finding.** The host runs BIND as its primary DNS server
+> **Security implication.** None by itself. This command only identifies the software responsible for DNS services.
+
+Now let's determine the network exposure of the DNS service:
+
 ```bash
 [root@thuner-srv1 ~]# ss -tulnp | grep :53
 udp    UNCONN     0      0      192.168.122.1:53                    *:*                   users:(("dnsmasq",pid=2266,fd=5))
 udp    UNCONN     0      0      192.168.122.1:53                    *:*                   users:(("named",pid=1874,fd=586),("named",pid=1874,fd=585),("named",pid=1874,fd=584),("named",pid=1874,fd=583),("named",pid=1874,fd=582),("named",pid=1874,fd=581),("named",pid=1874,fd=580),("named",pid=1874,fd=579),("named",pid=1874,fd=578),("named",pid=1874,fd=577),("named",pid=1874,fd=576),("named",pid=1874,fd=575),("named",pid=1874,fd=574),("named",pid=1874,fd=573),("named",pid=1874,fd=572))
-udp    UNCONN     0      0      192.168.1.203:53                    *:*                   users:(("named",pid=1874,fd=571),("named",pid=1874,fd=570),("named",pid=1874,fd=569),("named",pid=1874,fd=568),("named",pid=1874,fd=567),("named",pid=1874,fd=566),("named",pid=1874,fd=565),("named",pid=1874,fd=564),("named",pid=1874,fd=563),("named",pid=1874,fd=562),("named",pid=1874,fd=561),("named",pid=1874,fd=560),("named",pid=1874,fd=559),("named",pid=1874,fd=558),("named",pid=1874,fd=557))
-udp    UNCONN     0      0      142.244.83.9:53                    *:*                   users:(("named",pid=1874,fd=556),("named",pid=1874,fd=555),("named",pid=1874,fd=554),("named",pid=1874,fd=553),("named",pid=1874,fd=552),("named",pid=1874,fd=551),("named",pid=1874,fd=550),("named",pid=1874,fd=549),("named",pid=1874,fd=548),("named",pid=1874,fd=547),("named",pid=1874,fd=546),("named",pid=1874,fd=545),("named",pid=1874,fd=544),("named",pid=1874,fd=543),("named",pid=1874,fd=542))
+udp    UNCONN     0      0      192.168.1.XX:53                    *:*                   users:(("named",pid=1874,fd=571),("named",pid=1874,fd=570),("named",pid=1874,fd=569),("named",pid=1874,fd=568),("named",pid=1874,fd=567),("named",pid=1874,fd=566),("named",pid=1874,fd=565),("named",pid=1874,fd=564),("named",pid=1874,fd=563),("named",pid=1874,fd=562),("named",pid=1874,fd=561),("named",pid=1874,fd=560),("named",pid=1874,fd=559),("named",pid=1874,fd=558),("named",pid=1874,fd=557))
+udp    UNCONN     0      0      142.244.83.XX:53                    *:*                   users:(("named",pid=1874,fd=556),("named",pid=1874,fd=555),("named",pid=1874,fd=554),("named",pid=1874,fd=553),("named",pid=1874,fd=552),("named",pid=1874,fd=551),("named",pid=1874,fd=550),("named",pid=1874,fd=549),("named",pid=1874,fd=548),("named",pid=1874,fd=547),("named",pid=1874,fd=546),("named",pid=1874,fd=545),("named",pid=1874,fd=544),("named",pid=1874,fd=543),("named",pid=1874,fd=542))
 udp    UNCONN     0      0      127.0.0.1:53                    *:*                   users:(("named",pid=1874,fd=541),("named",pid=1874,fd=540),("named",pid=1874,fd=539),("named",pid=1874,fd=538),("named",pid=1874,fd=537),("named",pid=1874,fd=536),("named",pid=1874,fd=535),("named",pid=1874,fd=534),("named",pid=1874,fd=533),("named",pid=1874,fd=532),("named",pid=1874,fd=531),("named",pid=1874,fd=530),("named",pid=1874,fd=529),("named",pid=1874,fd=528),("named",pid=1874,fd=527))
 udp    UNCONN     0      0      [::]:53                 [::]:*                   users:(("named",pid=1874,fd=526),("named",pid=1874,fd=525),("named",pid=1874,fd=524),("named",pid=1874,fd=523),("named",pid=1874,fd=522),("named",pid=1874,fd=521),("named",pid=1874,fd=520),("named",pid=1874,fd=519),("named",pid=1874,fd=518),("named",pid=1874,fd=517),("named",pid=1874,fd=516),("named",pid=1874,fd=515),("named",pid=1874,fd=514),("named",pid=1874,fd=513),("named",pid=1874,fd=512))
 tcp    LISTEN     0      10     192.168.122.1:53                    *:*                   users:(("named",pid=1874,fd=27))
-tcp    LISTEN     0      10     192.168.1.203:53                    *:*                   users:(("named",pid=1874,fd=24))
-tcp    LISTEN     0      10     142.244.83.9:53                    *:*                   users:(("named",pid=1874,fd=23))
+tcp    LISTEN     0      10     192.168.1.XX:53                    *:*                   users:(("named",pid=1874,fd=24))
+tcp    LISTEN     0      10     142.244.83.XX:53                    *:*                   users:(("named",pid=1874,fd=23))
 tcp    LISTEN     0      10     127.0.0.1:53                    *:*                   users:(("named",pid=1874,fd=22))
 tcp    LISTEN     0      10     [::]:53                 [::]:*                   users:(("named",pid=1874,fd=21))
 ```
+
+All sockets listening on the DNS service port (`53`) are enumerated. The output shows that `named` accepts both UDP and TCP DNS requests on:
+
+* `127.0.0.1`: local host only.
+* `192.168.1.XX`: private cluster network.
+* `142.244.83.X`: University of Alberta public network.
+* `[::]`: all IPv6 interfaces.
+
+This demonstrates that the DNS service is exposed simultaneously on the loopback interface, the internal cluster network, the institutional network, and all IPv6 interfaces.
+
+> **Finding.** The DNS server is reachable from multiple network segments rather than being restricted to a single interface.
+> **Security implication.** Listening on multiple interfaces is common for infrastructure DNS servers and is not itself a vulnerability. However, it increases the potential attack surface because any DNS functionality enabled by the server becomes accessible from every interface on which it listens.
+
+Finally, let's examine the DNS security configuration:
 
 ```bash
 [root@thuner-srv1 ~]# grep -E "options|recursion|allow-query|allow-recursion|listen-on" -n /etc/named.conf
@@ -163,6 +186,17 @@ tcp    LISTEN     0      10     [::]:53                 [::]:*                  
 26:	   recursion. 
 33:	recursion yes;
 ```
+
+The configuration directives governing client access and recursive resolution. The directives shown indicate that:
+
+* BIND listens on every configured IPv4 and IPv6 interface.
+* DNS queries are accepted from any client.
+* Recursive resolution is enabled.
+* The configuration does not show an `allow-recursion` access-control list.
+
+> **Finding.** The server is configured as both an authoritative DNS server and a recursive resolver.
+
+> **Security implication.** Running an authoritative DNS server with recursion enabled increases the attack surface. If recursive queries are not explicitly restricted through `allow-recursion`, `allow-query-cache`, views, or firewall rules, the server may operate as an open recursive resolver. Open recursive resolvers are recognized security risks because they can be abused for DNS amplification and reflection attacks and provide recursive resolution services to unauthorized clients.
 
 ```bash
 [root@thuner-srv1 ~]# firewall-cmd --permanent --remove-port=53/udp
