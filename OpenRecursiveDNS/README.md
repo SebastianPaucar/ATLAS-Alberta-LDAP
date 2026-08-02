@@ -198,6 +198,10 @@ The configuration directives governing client access and recursive resolution. T
 
 > **Security implication.** Running an authoritative DNS server with recursion enabled increases the attack surface. If recursive queries are not explicitly restricted through `allow-recursion`, `allow-query-cache`, views, or firewall rules, the server may operate as an open recursive resolver. Open recursive resolvers are recognized security risks because they can be abused for DNS amplification and reflection attacks and provide recursive resolution services to unauthorized clients.
 
+## Mitigating, hardening and verification
+
+Let's remove unrestricted access to the DNS service and replace it with source-based access control by modifying the host firewall rules.
+
 ```bash
 [root@thuner-srv1 ~]# firewall-cmd --permanent --remove-port=53/udp
 success
@@ -233,12 +237,127 @@ public (active)
 	rule family="ipv4" source address="192.168.122.0/24" port port="53" protocol="tcp" accept
 ```
 
+First, the generic firewall rules exposing TCP and UDP port 53 are removed. New rich rules are then added to permit DNS traffic exclusively from the trusted private networks `192.168.1.0/24` (cluster network) and `192.168.122.0/24` (`libvirt` virtual network). Finally, the firewall configuration is reloaded and verified. This mitigation moves access control from a globally accessible service to a network-restricted service. As a result, DNS requests originating from external networks, including the institutional network (`142.244.83.0/24`), are rejected before reaching the BIND daemon.
+
+> Unrestricted network exposure of the DNS service was removed. DNS access to trusted internal networks is now restricted.This reduces the attack surface available to external hosts.
+
+Hardening the BIND configuration:
 
 ```bash
 [root@thuner-srv1 ~]# emacs /etc/named.conf
+[root@thuner-srv1 ~]# cat /etc/named.conf
+//
+// named.conf
+//
+// Provided by Red Hat bind package to configure the ISC BIND named(8) DNS
+// server as a caching only nameserver (as a localhost DNS resolver only).
+//
+// See /usr/share/doc/bind*/sample/ for example named configuration files.
+//
+// See the BIND Administrator's Reference Manual (ARM) for details about the
+// configuration located in /usr/share/doc/bind-{version}/Bv9ARM.html
+
+options {
+        listen-on port 53 { 127.0.0.1; 192.168.1.203; 192.168.122.1; };
+	listen-on-v6 port 53 { none; };
+	directory 	"/var/named";
+	dump-file 	"/var/named/data/cache_dump.db";
+	statistics-file "/var/named/data/named_stats.txt";
+	memstatistics-file "/var/named/data/named_mem_stats.txt";
+	recursing-file  "/var/named/data/named.recursing";
+	secroots-file   "/var/named/data/named.secroots";
+
+	/* 
+	 - If you are building an AUTHORITATIVE DNS server, do NOT enable recursion.
+	 - If you are building a RECURSIVE (caching) DNS server, you need to enable 
+	   recursion. 
+	 - If your recursive DNS server has a public IP address, you MUST enable access 
+	   control to limit queries to your legitimate users. Failing to do so will
+	   cause your server to become part of large scale DNS amplification 
+	   attacks. Implementing BCP38 within your network would greatly
+	   reduce such attack surface 
+	*/
+	recursion yes;
+        allow-query     { localhost; 192.168.1.0/24; 192.168.122.0/24; };
+        allow-recursion { localhost; 192.168.1.0/24; 192.168.122.0/24; };
+
+	dnssec-enable no;
+	dnssec-validation no;
+
+	/* Path to ISC DLV key */
+	bindkeys-file "/etc/named.root.key";
+
+	managed-keys-directory "/var/named/dynamic";
+
+	pid-file "/run/named/named.pid";
+	session-keyfile "/run/named/session.key";
+};
+
+logging {
+        channel default_debug {
+                file "data/named.run";
+                severity dynamic;
+        };
+};
+
+zone "." IN {
+	type hint;
+	file "named.ca";
+};
+
+zone "cpp.ualberta.ca" IN {
+    type master;
+    file "cpp.ualberta.ca.zone";
+    allow-update { none; };
+};
+
+include "/etc/named.rfc1912.zones";
+include "/etc/named.root.key";
 [root@thuner-srv1 ~]# named-checkconf /etc/named.conf
 [root@thuner-srv1 ~]# systemctl restart named
 ```
+
+The BIND configuration was modified to enforce the principle of least privilege. Unlike the original configuration:
+
+```bash
+listen-on port 53 { any; };
+listen-on-v6 port 53 { any; };
+allow-query { any; };
+recursion yes;
+```
+
+The revised configuration explicitly limits the interfaces on which BIND listens:
+
+``bash
+listen-on port 53 {
+    127.0.0.1;
+    192.168.1.203;
+    192.168.122.1;
+};
+listen-on-v6 { none; };
+```
+
+This prevents the DNS service from binding to the public interface (`142.244.83.XX`) or any IPv6 interface. The configuration also introduces access-control lists:
+
+```bash
+allow-query {
+    localhost;
+    192.168.1.0/24;
+    192.168.122.0/24;
+};
+
+allow-recursion {
+    localhost;
+    192.168.1.0/24;
+    192.168.122.0/24;
+};
+```
+
+These directives ensure that both authoritative queries and recursive resolution are available only to trusted local clients. `named-checkconf` was executed to validate the syntax of the modified configuration before restarting the service.
+
+> Unnecessary exposure on the public network, unused IPv6 listeners and the possibility of operating as an unrestricted recursive resolver were eliminated. This restricts authoritative queries and recursive resolution to trusted clients.
+
+Let's verify the mitigation:
 
 ```bash
 [root@thuner-srv1 ~]# ss -tulnp | grep :53
@@ -247,6 +366,8 @@ udp    UNCONN     0      0      192.168.1.203:53                    *:*         
 udp    UNCONN     0      0      127.0.0.1:53                    *:*                   users:(("named",pid=1289,fd=526),("named",pid=1289,fd=525),("named",pid=1289,fd=524),("named",pid=1289,fd=523),("named",pid=1289,fd=522),("named",pid=1289,fd=521),("named",pid=1289,fd=520),("named",pid=1289,fd=519),("named",pid=1289,fd=518),("named",pid=1289,fd=517),("named",pid=1289,fd=516),("named",pid=1289,fd=515),("named",pid=1289,fd=514),("named",pid=1289,fd=513),("named",pid=1289,fd=512))
 udp    UNCONN     0      0      192.168.122.1:53                    *:*                   users:(("dnsmasq",pid=2266,fd=5))
 tcp    LISTEN     0      10     192.168.122.1:53                    *:*                   users:(("named",pid=1289,fd=23))
-tcp    LISTEN     0      10     192.168.1.203:53                    *:*                   users:(("named",pid=1289,fd=22))
+tcp    LISTEN     0      10     192.168.1.XX:53                    *:*                   users:(("named",pid=1289,fd=22))
 tcp    LISTEN     0      10     127.0.0.1:53                    *:*                   users:(("named",pid=1289,fd=21))
 ```
+
+The final verification confirms that the BIND daemon is no longer listening on the institutional interface (`142.244.83.XX`) or on IPv6 (`[::]:53`). Instead, the service now accepts DNS requests only on `127.0.0.1`, 192.168.1.XX` and  `192.168.122.1`, corresponding to the loopback interface, the private cluster network, and the libvirt virtual network, respectively. The public interface has been removed from the listening sockets, confirming that DNS services are no longer directly exposed to the institutional network. The presence of `dnsmasq` on `192.168.122.1:53` is expected because it provides DNS services for the isolated libvirt virtual network and is independent of the cluster's authoritative DNS infrastructure.
